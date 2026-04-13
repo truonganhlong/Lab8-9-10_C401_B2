@@ -22,9 +22,10 @@ Definition of Done Sprint 3:
 """
 
 import os
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 import chromadb
+import requests
 from index import get_embedding, CHROMA_DB_DIR
 from openai import OpenAI
 
@@ -38,6 +39,9 @@ TOP_K_SEARCH = 10    # Số chunk lấy từ vector store trước rerank (searc
 TOP_K_SELECT = 3     # Số chunk gửi vào prompt sau rerank/select (top-3 sweet spot)
 
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-5.4-mini")
+JINA_RERANK_MODEL = os.getenv("JINA_RERANK_MODEL", "jina-reranker-v3")
+JINA_RERANK_URL = os.getenv("JINA_RERANK_URL", "https://api.jina.ai/v1/rerank")
+JINA_TIMEOUT_SECONDS = float(os.getenv("JINA_TIMEOUT_SECONDS", "30"))
 
 
 # =============================================================================
@@ -153,22 +157,23 @@ def rerank(
     top_k: int = TOP_K_SELECT,
 ) -> List[Dict[str, Any]]:
     """
-    Rerank các candidate chunks bằng cross-encoder.
+    Rerank các candidate chunks bằng Jina reranker API.
 
-    Cross-encoder: chấm lại "chunk nào thực sự trả lời câu hỏi này?"
+    Reranker: chấm lại "chunk nào thực sự trả lời câu hỏi này?"
     MMR (Maximal Marginal Relevance): giữ relevance nhưng giảm trùng lặp
 
     Funnel logic (từ slide):
       Search rộng (top-20) → Rerank (top-6) → Select (top-3)
 
     TODO Sprint 3 (nếu chọn rerank):
-    Option A — Cross-encoder:
-        from sentence_transformers import CrossEncoder
-        model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        pairs = [[query, chunk["text"]] for chunk in candidates]
-        scores = model.predict(pairs)
-        ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
-        return [chunk for chunk, _ in ranked[:top_k]]
+    Option A — Hosted reranker API:
+        POST https://api.jina.ai/v1/rerank
+        {
+          "model": "jina-reranker-v3",
+          "query": query,
+          "documents": [chunk["text"] for chunk in candidates],
+          "top_n": top_k
+        }
 
     Option B — Rerank bằng LLM (đơn giản hơn nhưng tốn token):
         Gửi list chunks cho LLM, yêu cầu chọn top_k relevant nhất
@@ -181,25 +186,49 @@ def rerank(
     if not candidates:
         return []
 
-    # ── BƯỚC 1: Load cross-encoder model ─────────────────────────────
-    model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    jina_api_key = os.getenv("JINA_API_KEY")
+    if not jina_api_key:
+        raise ValueError("Thiếu JINA_API_KEY trong file .env")
 
-    # ── BƯỚC 2: Tạo pairs [query, chunk_text] ────────────────────────
-    pairs = [[query, chunk["text"]] for chunk in candidates]
+    top_n = min(top_k, len(candidates))
+    payload = {
+        "model": JINA_RERANK_MODEL,
+        "query": query,
+        "documents": [chunk["text"] for chunk in candidates],
+        "top_n": top_n,
+        "return_documents": False,
+    }
+    headers = {
+        "Authorization": f"Bearer {jina_api_key}",
+        "Content-Type": "application/json",
+    }
 
-    # ── BƯỚC 3: Chấm điểm từng pair ──────────────────────────────────
-    scores = model.predict(pairs)
+    response = requests.post(
+        JINA_RERANK_URL,
+        headers=headers,
+        json=payload,
+        timeout=JINA_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    data = response.json()
 
-    # ── BƯỚC 4: Gắn score vào từng chunk ─────────────────────────────
-    for chunk, score in zip(candidates, scores):
-        chunk["rerank_score"] = float(score)
+    ranked_chunks: List[Dict[str, Any]] = []
+    for result in data.get("results", []):
+        index = result.get("index")
+        if not isinstance(index, int) or not (0 <= index < len(candidates)):
+            continue
 
-    # ── BƯỚC 5: Sort theo score giảm dần ─────────────────────────────
-    ranked = sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)
+        original = candidates[index]
+        ranked_chunks.append({
+            **original,
+            "metadata": dict(original.get("metadata", {})),
+            "rerank_score": float(result.get("relevance_score", 0.0)),
+        })
 
-    # ── BƯỚC 6: Trả về top_k tốt nhất ────────────────────────────────
-    return ranked[:top_k]
-    return candidates[:top_k]
+    if not ranked_chunks:
+        raise RuntimeError("Jina reranker không trả về kết quả hợp lệ")
+
+    return ranked_chunks[:top_n]
 
 
 # =============================================================================
@@ -434,18 +463,25 @@ def compare_retrieval_strategies(query: str) -> None:
     print(f"Query: {query}")
     print('='*60)
 
-    strategies = ["dense", "hybrid"]  # Thêm "sparse" sau khi implement
-
-    for strategy in strategies:
-        print(f"\n--- Strategy: {strategy} ---")
-        try:
-            result = rag_answer(query, retrieval_mode=strategy, verbose=False)
-            print(f"Answer: {result['answer']}")
-            print(f"Sources: {result['sources']}")
-        except NotImplementedError as e:
-            print(f"Chưa implement: {e}")
-        except Exception as e:
-            print(f"Lỗi: {e}")
+    print(f"\n--- Strategy: dense ---")
+    try:
+        result = rag_answer(query, retrieval_mode="dense", verbose=False, use_rerank=False)
+        print(f"Answer: {result['answer']}")
+        print(f"Sources: {result['sources']}")
+    except NotImplementedError as e:
+        print(f"Chưa implement: {e}")
+    except Exception as e:
+        print(f"Lỗi: {e}")
+    
+    print(f"\n--- Strategy: Rerank ---")
+    try:
+        result = rag_answer(query, retrieval_mode="dense", verbose=False, use_rerank=True)
+        print(f"Answer: {result['answer']}")
+        print(f"Sources: {result['sources']}")
+    except NotImplementedError as e:
+        print(f"Chưa implement: {e}")
+    except Exception as e:
+        print(f"Lỗi: {e}")
 
 
 # =============================================================================
@@ -482,14 +518,14 @@ if __name__ == "__main__":
     compare_retrieval_strategies("Approval Matrix để cấp quyền là tài liệu nào?")
     compare_retrieval_strategies("ERR-403-AUTH")
 
-    print("\n\nViệc cần làm Sprint 2:")
-    print("  1. Implement retrieve_dense() — query ChromaDB")
-    print("  2. Implement call_llm() — gọi OpenAI hoặc Gemini")
-    print("  3. Chạy rag_answer() với 3+ test queries")
-    print("  4. Verify: output có citation không? Câu không có docs → abstain không?")
+    # print("\n\nViệc cần làm Sprint 2:")
+    # print("  1. Implement retrieve_dense() — query ChromaDB")
+    # print("  2. Implement call_llm() — gọi OpenAI hoặc Gemini")
+    # print("  3. Chạy rag_answer() với 3+ test queries")
+    # print("  4. Verify: output có citation không? Câu không có docs → abstain không?")
 
-    print("\nViệc cần làm Sprint 3:")
-    print("  1. Chọn 1 trong 3 variants: hybrid, rerank, hoặc query transformation")
-    print("  2. Implement variant đó")
-    print("  3. Chạy compare_retrieval_strategies() để thấy sự khác biệt")
-    print("  4. Ghi lý do chọn biến đó vào docs/tuning-log.md")
+    # print("\nViệc cần làm Sprint 3:")
+    # print("  1. Chọn 1 trong 3 variants: hybrid, rerank, hoặc query transformation")
+    # print("  2. Implement variant đó")
+    # print("  3. Chạy compare_retrieval_strategies() để thấy sự khác biệt")
+    # print("  4. Ghi lý do chọn biến đó vào docs/tuning-log.md")

@@ -3,6 +3,7 @@
 
 # === Core ===
 python-dotenv>=1.0.0
+requests>=2.31.0
 
 # === LLM Providers (chọn ít nhất một) ===
 openai>=1.0.0                    # Option A: OpenAI API
@@ -22,7 +23,7 @@ sentence-transformers>=2.7.0     # Model: paraphrase-multilingual-MiniLM-L12-v2
 rank-bm25>=0.2.2                 # BM25 keyword search
 
 # === Sprint 3: Rerank ===
-# sentence-transformers đã bao gồm CrossEncoder
+# Dùng Jina reranker API (jina-reranker-v3) qua requests
 
 # === Utils ===
 tqdm>=4.66.0                     # Progress bar khi index nhiều docs

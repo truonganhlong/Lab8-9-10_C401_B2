@@ -19,10 +19,11 @@ A/B Rule (từ slide):
 
 import json
 import csv
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from rag_answer import rag_answer
+from rag_answer import rag_answer, call_llm
 
 # =============================================================================
 # CẤU HÌNH
@@ -43,11 +44,11 @@ BASELINE_CONFIG = {
 # Cấu hình variant (Sprint 3 — điều chỉnh theo lựa chọn của nhóm)
 # TODO Sprint 4: Cập nhật VARIANT_CONFIG theo variant nhóm đã implement
 VARIANT_CONFIG = {
-    "retrieval_mode": "hybrid",   # Hoặc "dense" nếu chỉ đổi rerank
+    "retrieval_mode": "dense",
     "top_k_search": 10,
     "top_k_select": 3,
-    "use_rerank": True,           # Hoặc False nếu variant là hybrid không rerank
-    "label": "variant_hybrid_rerank",
+    "use_rerank": True,
+    "label": "variant_dense_rerank",
 }
 
 
@@ -88,12 +89,35 @@ def score_faithfulness(
 
     Trả về dict với: score (1-5) và notes (lý do)
     """
-    # TODO Sprint 4: Implement scoring
-    # Tạm thời trả về None (yêu cầu chấm thủ công)
-    return {
-        "score": None,
-        "notes": "TODO: Chấm thủ công hoặc implement LLM-as-Judge",
-    }
+    if not chunks_used or not answer:
+        return {"score": 1, "notes": "No chunks or empty answer"}
+
+    context = "\n---\n".join(c.get("text", "") for c in chunks_used)
+    prompt = f"""You are an impartial evaluator. Rate the FAITHFULNESS of the answer on a 1-5 scale.
+Faithfulness = every claim in the answer is supported by the retrieved context.
+
+5: Every piece of information is directly found in the context.
+4: Almost all grounded, one minor detail uncertain.
+3: Mostly grounded, some information may come from outside the context.
+2: Much information is not in the context.
+1: Answer is largely fabricated / not grounded.
+
+Retrieved Context:
+{context}
+
+Answer:
+{answer}
+
+Output ONLY a JSON object: {{"score": <int 1-5>, "reason": "<short explanation>"}}"""
+    try:
+        raw = call_llm(prompt)
+        match = re.search(r'\{[^}]+\}', raw)
+        if match:
+            parsed = json.loads(match.group())
+            return {"score": int(parsed["score"]), "notes": parsed.get("reason", "")}
+    except Exception as e:
+        return {"score": None, "notes": f"LLM-as-Judge error: {e}"}
+    return {"score": None, "notes": "Could not parse LLM response"}
 
 
 def score_answer_relevance(
@@ -113,10 +137,34 @@ def score_answer_relevance(
 
     TODO Sprint 4: Implement tương tự score_faithfulness
     """
-    return {
-        "score": None,
-        "notes": "TODO: Implement score_answer_relevance",
-    }
+    if not answer:
+        return {"score": 1, "notes": "Empty answer"}
+
+    prompt = f"""You are an impartial evaluator. Rate the ANSWER RELEVANCE on a 1-5 scale.
+Answer Relevance = the answer directly addresses the user's question.
+
+5: Directly and fully answers the question.
+4: Answers correctly but misses some minor details.
+3: Related but doesn't address the core question.
+2: Partially off-topic.
+1: Does not answer the question at all.
+
+Question:
+{query}
+
+Answer:
+{answer}
+
+Output ONLY a JSON object: {{"score": <int 1-5>, "reason": "<short explanation>"}}"""
+    try:
+        raw = call_llm(prompt)
+        match = re.search(r'\{[^}]+\}', raw)
+        if match:
+            parsed = json.loads(match.group())
+            return {"score": int(parsed["score"]), "notes": parsed.get("reason", "")}
+    except Exception as e:
+        return {"score": None, "notes": f"LLM-as-Judge error: {e}"}
+    return {"score": None, "notes": "Could not parse LLM response"}
 
 
 def score_context_recall(
@@ -198,10 +246,37 @@ def score_completeness(
          Rate completeness 1-5. Are all key points covered?
          Output: {'score': int, 'missing_points': [str]}"
     """
-    return {
-        "score": None,
-        "notes": "TODO: Implement score_completeness (so sánh với expected_answer)",
-    }
+    if not answer or not expected_answer:
+        return {"score": 1, "notes": "Empty answer or no expected_answer"}
+
+    prompt = f"""You are an impartial evaluator. Rate the COMPLETENESS of the answer on a 1-5 scale.
+Completeness = the answer covers all key points from the expected answer.
+
+5: All key points covered.
+4: Missing one minor detail.
+3: Missing some important information.
+2: Missing many important points.
+1: Missing most core content.
+
+Question:
+{query}
+
+Expected Answer:
+{expected_answer}
+
+Model Answer:
+{answer}
+
+Output ONLY a JSON object: {{"score": <int 1-5>, "reason": "<short explanation>"}}"""
+    try:
+        raw = call_llm(prompt)
+        match = re.search(r'\{[^}]+\}', raw)
+        if match:
+            parsed = json.loads(match.group())
+            return {"score": int(parsed["score"]), "notes": parsed.get("reason", "")}
+    except Exception as e:
+        return {"score": None, "notes": f"LLM-as-Judge error: {e}"}
+    return {"score": None, "notes": "Could not parse LLM response"}
 
 
 # =============================================================================
@@ -446,70 +521,92 @@ Generated: {timestamp}
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Sprint 4: Evaluation & Scorecard")
+    print("Sprint 4: RAGAS Evaluation — Base vs Rerank")
     print("=" * 60)
 
-    # Kiểm tra test questions
+    # Load test questions
     print(f"\nLoading test questions từ: {TEST_QUESTIONS_PATH}")
     try:
         with open(TEST_QUESTIONS_PATH, "r", encoding="utf-8") as f:
             test_questions = json.load(f)
         print(f"Tìm thấy {len(test_questions)} câu hỏi")
-
-        # In preview
-        for q in test_questions[:3]:
-            print(f"  [{q['id']}] {q['question']} ({q['category']})")
-        print("  ...")
-
     except FileNotFoundError:
         print("Không tìm thấy file test_questions.json!")
         test_questions = []
 
-    # --- Chạy Baseline ---
-    print("\n--- Chạy Baseline ---")
-    print("Lưu ý: Cần hoàn thành Sprint 2 trước khi chạy scorecard!")
-    try:
-        baseline_results = run_scorecard(
-            config=BASELINE_CONFIG,
-            test_questions=test_questions,
-            verbose=True,
-        )
+    if not test_questions:
+        exit(1)
 
-        # Save scorecard
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        baseline_md = generate_scorecard_summary(baseline_results, "baseline_dense")
-        scorecard_path = RESULTS_DIR / "scorecard_baseline.md"
-        scorecard_path.write_text(baseline_md, encoding="utf-8")
-        print(f"\nScorecard lưu tại: {scorecard_path}")
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    except NotImplementedError:
-        print("Pipeline chưa implement. Hoàn thành Sprint 2 trước.")
-        baseline_results = []
+    # --- Chạy Baseline (dense, no rerank) ---
+    print("\n" + "=" * 60)
+    print("PHASE 1: Baseline (Dense, no rerank)")
+    print("=" * 60)
+    baseline_results = run_scorecard(
+        config=BASELINE_CONFIG,
+        test_questions=test_questions,
+        verbose=True,
+    )
+    baseline_md = generate_scorecard_summary(baseline_results, "baseline_dense")
+    (RESULTS_DIR / "scorecard_baseline.md").write_text(baseline_md, encoding="utf-8")
 
-    # --- Chạy Variant (sau khi Sprint 3 hoàn thành) ---
-    # TODO Sprint 4: Uncomment sau khi implement variant trong rag_answer.py
-    # print("\n--- Chạy Variant ---")
-    # variant_results = run_scorecard(
-    #     config=VARIANT_CONFIG,
-    #     test_questions=test_questions,
-    #     verbose=True,
-    # )
-    # variant_md = generate_scorecard_summary(variant_results, VARIANT_CONFIG["label"])
-    # (RESULTS_DIR / "scorecard_variant.md").write_text(variant_md, encoding="utf-8")
+    # --- Chạy Variant (dense + rerank) ---
+    print("\n" + "=" * 60)
+    print("PHASE 2: Variant (Dense + Rerank)")
+    print("=" * 60)
+    variant_results = run_scorecard(
+        config=VARIANT_CONFIG,
+        test_questions=test_questions,
+        verbose=True,
+    )
+    variant_md = generate_scorecard_summary(variant_results, "variant_dense_rerank")
+    (RESULTS_DIR / "scorecard_variant.md").write_text(variant_md, encoding="utf-8")
 
     # --- A/B Comparison ---
-    # TODO Sprint 4: Uncomment sau khi có cả baseline và variant
-    # if baseline_results and variant_results:
-    #     compare_ab(
-    #         baseline_results,
-    #         variant_results,
-    #         output_csv="ab_comparison.csv"
-    #     )
+    if baseline_results and variant_results:
+        compare_ab(
+            baseline_results,
+            variant_results,
+            output_csv="ab_comparison.csv",
+        )
 
-    print("\n\nViệc cần làm Sprint 4:")
-    print("  1. Hoàn thành Sprint 2 + 3 trước")
-    print("  2. Chấm điểm thủ công hoặc implement LLM-as-Judge trong score_* functions")
-    print("  3. Chạy run_scorecard(BASELINE_CONFIG)")
-    print("  4. Chạy run_scorecard(VARIANT_CONFIG)")
-    print("  5. Gọi compare_ab() để thấy delta")
-    print("  6. Cập nhật docs/tuning-log.md với kết quả và nhận xét")
+    # --- RAGAS Triad Summary ---
+    print("\n" + "=" * 60)
+    print("RAGAS TRIAD SUMMARY")
+    print("=" * 60)
+    triad_metrics = ["faithfulness", "relevance", "context_recall"]
+    print(f"\n{'Metric':<20} {'Base (no rerank)':>16} {'Rerank':>10} {'Delta':>8}")
+    print("-" * 58)
+    for metric in triad_metrics:
+        b = [r[metric] for r in baseline_results if r[metric] is not None]
+        v = [r[metric] for r in variant_results if r[metric] is not None]
+        b_avg = sum(b) / len(b) if b else None
+        v_avg = sum(v) / len(v) if v else None
+        delta = (v_avg - b_avg) if (b_avg and v_avg) else None
+        b_str = f"{b_avg:.2f}/5" if b_avg else "N/A"
+        v_str = f"{v_avg:.2f}/5" if v_avg else "N/A"
+        d_str = f"{delta:+.2f}" if delta is not None else "N/A"
+        label = {"faithfulness": "Faithfulness", "relevance": "Answer Relevance", "context_recall": "Context Recall"}[metric]
+        print(f"{label:<20} {b_str:>16} {v_str:>10} {d_str:>8}")
+
+    # Per-question answer comparison
+    print("\n" + "-" * 60)
+    print("PER-QUESTION: Base vs Rerank answers")
+    print("-" * 60)
+    b_by_id = {r["id"]: r for r in baseline_results}
+    for v_row in variant_results:
+        qid = v_row["id"]
+        b_row = b_by_id.get(qid, {})
+        print(f"\n[{qid}] {v_row['query']}")
+        print(f"  BASE  : {b_row.get('answer', 'N/A')[:120]}")
+        print(f"  RERANK: {v_row.get('answer', 'N/A')[:120]}")
+        b_total = sum(b_row.get(m, 0) or 0 for m in triad_metrics)
+        v_total = sum(v_row.get(m, 0) or 0 for m in triad_metrics)
+        winner = "RERANK ✓" if v_total > b_total else ("BASE ✓" if b_total > v_total else "TIE")
+        print(f"  RAGAS : Base={b_total}/15  Rerank={v_total}/15  → {winner}")
+
+    print(f"\nKết quả đã lưu vào: {RESULTS_DIR}/")
+    print("  - scorecard_baseline.md")
+    print("  - scorecard_variant.md")
+    print("  - ab_comparison.csv")
