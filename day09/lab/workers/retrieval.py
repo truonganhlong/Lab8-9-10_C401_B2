@@ -53,7 +53,7 @@ def _get_embedding_fn():
                 "model": "jina-embeddings-v5-text-small",
                 "input": [text],
                 "task": "retrieval.query",
-                "dimensions": 512,  # Có thể tùy chỉnh
+                "dimensions": 1024,  # Có thể tùy chỉnh
             }
             try:
                 # Tăng timeout lên 20s cho Jina API
