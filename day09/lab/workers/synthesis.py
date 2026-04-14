@@ -45,7 +45,7 @@ def _call_llm(messages: list) -> str:
     try:
         from openai import OpenAI
         api_key = os.getenv("OPENAI_API_KEY")
-        model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        model = os.getenv("LLM_MODEL", "gpt-5.4-mini")
         if api_key:
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(

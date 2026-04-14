@@ -29,7 +29,7 @@
 ## 1. Kiến trúc nhóm đã xây dựng (150–200 từ)
 
 **Hệ thống tổng quan:**
-Nhóm xây dựng hệ thống phân tán theo pattern **Supervisor-Worker** (Python thuần không dùng LangGraph). Hệ thống bao gồm 1 phần Supervisor (thuộc `graph.py`) đảm nhận việc route request đến các component khác; 3 Workers hành động song song gồm `retrieval_worker`, `policy_tool_worker`, và `human_review`; cùng 1 node cuối cuối là Synthesis Worker dùng LLM (`gpt-4o-mini`) thu thập lượng dữ liệu state để tạo câu trả lời cuối.
+Nhóm xây dựng hệ thống phân tán theo pattern **Supervisor-Worker** (Python thuần không dùng LangGraph). Hệ thống bao gồm 1 phần Supervisor (thuộc `graph.py`) đảm nhận việc route request đến các component khác; 3 Workers hành động song song gồm retrieval_worker, policy_tool_worker, và synthesis dùng LLM là gpt-5.4-mini thu thập lượng dữ liệu state để tạo câu trả lời cuối.
 
 **Routing logic cốt lõi:**
 Supervisor điều hướng dựa trên **Keyword Matching**. Các keyword bao gồm `POLICY_KEYWORDS`, `SLA_KEYWORDS`, `RISK_KEYWORDS`.
