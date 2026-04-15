@@ -1,6 +1,6 @@
 # Báo Cáo Cá Nhân — Lab Day 10: Data Pipeline & Observability
 **Họ và tên:** Trương Anh Long
-**Vai trò:** Sprint 3 — Monitoring
+**Vai trò:** Sprint 3 — Embed & Evaluation Owner (Sprint 3)
 **Ngày nộp:** 15/04/2026
 **Độ dài yêu cầu:** 400–650 từ
 
