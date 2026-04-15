@@ -9,6 +9,7 @@
 | Nguồn | Phương thức ingest | Failure mode chính | Metric / alert |
 |-------|-------------------|-------------------|----------------|
 | `data/raw/policy_export_dirty.csv` | Batch CSV export từ lớp staging trước khi publish | Duplicate chunk, thiếu `effective_date`, `doc_id` lạ, `effective_date` không ISO | `raw_records`, `quarantine_records`, cảnh báo nếu `quarantine_records > 0` |
+| `data/raw/policy_export_sprint2_probe.csv` | Probe CSV riêng để đo impact Sprint 2 trên anomaly thời gian / stale marker | `invalid_exported_at_format`, `effective_date_after_exported_at`, `stale_source_marker` | `quarantine_records`, quarantine reason theo từng run probe |
 | `data/docs/policy_refund_v4.txt` | Canonical text file để đối chiếu policy refund khi clean và eval retrieval | Chunk stale nói `14 ngày làm việc` thay vì bản v4 là `7 ngày làm việc` | Expectation `refund_no_stale_14d_window`, eval `hits_forbidden` cho `q_refund_window` |
 | `data/docs/hr_leave_policy.txt` | Canonical text file cho HR policy | Export kéo nhầm bản cũ 2025 (`10 ngày phép năm`) thay vì policy 2026 | Quarantine reason `stale_hr_policy_effective_date`, expectation `hr_leave_no_stale_10d_annual` |
 | `data/docs/sla_p1_2026.txt` và `data/docs/it_helpdesk_faq.txt` | Canonical knowledge docs cho IT Helpdesk / SLA | Sai mapping `doc_id`, thiếu metadata thời gian export, drift nội dung khi re-export | `no_empty_doc_id`, freshness theo `latest_exported_at`, review manifest theo `run_id` |
@@ -36,7 +37,11 @@ Các trường hợp hiện tại đi quarantine:
 - `unknown_doc_id`
 - `missing_effective_date`
 - `invalid_effective_date_format`
+- `missing_exported_at`
+- `invalid_exported_at_format`
+- `effective_date_after_exported_at`
 - `stale_hr_policy_effective_date`
+- `stale_source_marker`
 - `missing_chunk_text`
 - `duplicate_chunk_text`
 
@@ -55,6 +60,8 @@ Trong Sprint 1, policy đơn giản là "quarantine trước, không auto-merge 
 Source of truth cho refund policy là `data/docs/policy_refund_v4.txt`, tương ứng `doc_id=policy_refund_v4`, effective date `2026-02-01`. Nếu raw export còn câu nói `14 ngày làm việc` thì coi là dữ liệu stale từ bản sync cũ và phải bị fix hoặc fail expectation.
 
 Source of truth cho HR leave là `data/docs/hr_leave_policy.txt`, với cutoff version tối thiểu `2026-01-01`. Dòng HR mang effective date cũ hơn mốc này không được publish vào cleaned dataset.
+
+Từ Sprint 2, pipeline còn chặn thêm các row có `exported_at` không parse được, row có `effective_date > exported_at`, và row còn marker stale/draft như `bản sync cũ` hoặc `lỗi migration`. Các rule này được đo impact bằng `run_id=sprint2-sample` và `run_id=sprint2-probe`.
 
 Canonical docs hiện tại:
 

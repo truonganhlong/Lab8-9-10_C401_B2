@@ -52,7 +52,11 @@ def _log(path: Path, line: str) -> None:
 
 def cmd_run(args: argparse.Namespace) -> int:
     run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%MZ")
-    raw_path = Path(args.raw)
+    raw_path = Path(args.raw).expanduser()
+    if not raw_path.is_absolute():
+        raw_path = (Path.cwd() / raw_path).resolve()
+    else:
+        raw_path = raw_path.resolve()
     if not raw_path.is_file():
         print(f"ERROR: raw file not found: {raw_path}", file=sys.stderr)
         return 1
@@ -111,10 +115,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     if cleaned:
         latest_exported = max((r.get("exported_at") or "" for r in cleaned), default="")
 
+    try:
+        raw_path_for_manifest = str(raw_path.relative_to(ROOT))
+    except ValueError:
+        raw_path_for_manifest = str(raw_path)
+
     manifest = {
         "run_id": run_id,
         "run_timestamp": datetime.now(timezone.utc).isoformat(),
-        "raw_path": str(raw_path.relative_to(ROOT)),
+        "raw_path": raw_path_for_manifest,
         "raw_records": raw_count,
         "cleaned_records": len(cleaned),
         "quarantine_records": len(quarantine),

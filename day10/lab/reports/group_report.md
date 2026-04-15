@@ -43,15 +43,20 @@ _________________
 
 | Rule / Expectation mới (tên ngắn) | Trước (số liệu) | Sau / khi inject (số liệu) | Chứng cứ (log / CSV / commit) |
 |-----------------------------------|------------------|-----------------------------|-------------------------------|
-| … | … | … | … |
+| `stale_source_marker` | `manifest_smoke-provider.json`: `cleaned=6`, `quarantine=4` | `manifest_sprint2-sample.json`: `cleaned=5`, `quarantine=5` | `artifacts/quarantine/quarantine_sprint2-sample.csv` có thêm reason `stale_source_marker` |
+| `invalid_exported_at_format` | Trước probe chưa có guard cho timestamp lỗi | `run_id=sprint2-probe`: 1 row bị quarantine vì `invalid_exported_at_format` | `artifacts/quarantine/quarantine_sprint2-probe.csv` dòng `chunk_id=103` |
+| `effective_date_after_exported_at` | Trước probe chưa chặn timeline ngược | `run_id=sprint2-probe`: 1 row bị quarantine vì `effective_date_after_exported_at` | `artifacts/quarantine/quarantine_sprint2-probe.csv` dòng `chunk_id=104` |
+| `refund_single_active_chunk` (expectation halt) | Sample cũ còn 2 row `policy_refund_v4` active sau clean | `run_id=sprint2-sample`: log `active_refund_rows=1` và expectation `OK (halt)` | `artifacts/logs/run_sprint2-sample.log` |
 
 **Rule chính (baseline + mở rộng):**
 
-- …
+- Baseline 6 rule cũ vẫn giữ nguyên: allowlist `doc_id`, normalize `effective_date`, quarantine HR stale, quarantine `chunk_text` rỗng, dedupe, fix refund `14 -> 7`.
+- Sprint 2 bổ sung 3 rule mới có impact đo được: validate `exported_at`, chặn `effective_date > exported_at`, và quarantine stale marker như `bản sync cũ` / `lỗi migration`.
+- Expectation mới bám vào rule mới gồm `exported_at_iso_datetime`, `no_stale_source_markers`, `effective_date_not_after_exported_at`, và `refund_single_active_chunk`.
 
 **Ví dụ 1 lần expectation fail (nếu có) và cách xử lý:**
 
-_________________
+Nếu bỏ rule `stale_source_marker`, sample refund cũ vẫn có thể đi vào cleaned dataset và expectation `refund_single_active_chunk` sẽ fail vì còn hơn 1 chunk active cho `policy_refund_v4`. Sau khi quarantine row stale ở `run_id=sprint2-sample`, log chuyển sang `expectation[refund_single_active_chunk] OK (halt) :: active_refund_rows=1`.
 
 ---
 

@@ -89,7 +89,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-**Embedding:** hỗ trợ cả `EMBEDDING_PROVIDER=jina` với `jina-embeddings-v5-text-small` và `EMBEDDING_PROVIDER=sentence_transformers` cho model local. Nếu dùng Jina, điền `JINA_API_KEY` trong `.env`; nếu dùng local thì lần đầu sẽ tải model về máy. Nên dùng `CHROMA_DB_PATH` riêng cho mỗi embedding model để tránh va chạm dimension giữa các index cũ/mới.
+**Embedding:** hỗ trợ cả `EMBEDDING_PROVIDER=jina` với `jina-embeddings-v5-text-small` và `EMBEDDING_PROVIDER=sentence_transformers` cho model local. Nếu dùng Jina, điền `JINA_API_KEY` trong `.env`; nếu dùng local thì lần đầu sẽ tải model về máy. Với môi trường offline / smoke test có thể dùng `EMBEDDING_PROVIDER=hashing` để verify luồng Chroma mà không cần API ngoài. Nên dùng `CHROMA_DB_PATH` riêng cho mỗi embedding model để tránh va chạm dimension giữa các index cũ/mới.
 
 ---
 

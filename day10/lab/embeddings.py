@@ -18,7 +18,7 @@ def _normalize_provider(raw: str) -> str:
         "sentence-transformers": "sentence_transformers",
         "sentence_transformers": "sentence_transformers",
         "jina": "jina",
-        "jina_api": "jina",
+        "jina_api": "jina"
     }
     return aliases.get(provider, provider)
 
@@ -29,7 +29,10 @@ def get_embedding_provider() -> str:
 
 def get_embedding_model() -> str:
     provider = get_embedding_provider()
-    default_model = DEFAULT_JINA_MODEL if provider == "jina" else DEFAULT_LOCAL_MODEL
+    if provider == "jina":
+        default_model = DEFAULT_JINA_MODEL
+    elif provider == "sentence_transformers":
+        default_model = DEFAULT_LOCAL_MODEL
     return os.environ.get("EMBEDDING_MODEL", default_model).strip() or default_model
 
 

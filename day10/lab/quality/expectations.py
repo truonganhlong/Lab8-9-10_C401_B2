@@ -8,7 +8,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Tuple
+
+STALE_SOURCE_MARKERS = (
+    "bản sync cũ",
+    "lỗi migration",
+    "draft",
+    "deprecated",
+    "do not publish",
+)
 
 
 @dataclass
@@ -17,6 +26,17 @@ class ExpectationResult:
     passed: bool
     severity: str  # "warn" | "halt"
     detail: str
+
+
+def _parse_exported_at(raw: str) -> datetime | None:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    probe = s[:-1] + "+00:00" if s.endswith("Z") else s
+    try:
+        return datetime.fromisoformat(probe)
+    except ValueError:
+        return None
 
 
 def run_expectations(cleaned_rows: List[Dict[str, Any]]) -> Tuple[List[ExpectationResult], bool]:
@@ -109,6 +129,65 @@ def run_expectations(cleaned_rows: List[Dict[str, Any]]) -> Tuple[List[Expectati
             ok6,
             "halt",
             f"violations={len(bad_hr_annual)}",
+        )
+    )
+
+    # E7: exported_at phải là ISO datetime hợp lệ để freshness/manifest đáng tin cậy.
+    bad_exported = [r for r in cleaned_rows if _parse_exported_at(str(r.get("exported_at", ""))) is None]
+    ok7 = len(bad_exported) == 0
+    results.append(
+        ExpectationResult(
+            "exported_at_iso_datetime",
+            ok7,
+            "halt",
+            f"invalid_exported_at_rows={len(bad_exported)}",
+        )
+    )
+
+    # E8: chunk publish không được chứa marker draft/stale vì dễ pollute retrieval.
+    stale_marker_rows = [
+        r
+        for r in cleaned_rows
+        if any(marker in (r.get("chunk_text") or "").lower() for marker in STALE_SOURCE_MARKERS)
+    ]
+    ok8 = len(stale_marker_rows) == 0
+    results.append(
+        ExpectationResult(
+            "no_stale_source_markers",
+            ok8,
+            "halt",
+            f"violations={len(stale_marker_rows)}",
+        )
+    )
+
+    # E9: effective_date không được nằm sau exported_at của cùng record.
+    temporal_conflicts = []
+    for row in cleaned_rows:
+        exported_dt = _parse_exported_at(str(row.get("exported_at", "")))
+        effective_date = (row.get("effective_date") or "").strip()
+        if exported_dt is None or not effective_date:
+            continue
+        if effective_date > exported_dt.date().isoformat():
+            temporal_conflicts.append(row)
+    ok9 = len(temporal_conflicts) == 0
+    results.append(
+        ExpectationResult(
+            "effective_date_not_after_exported_at",
+            ok9,
+            "halt",
+            f"violations={len(temporal_conflicts)}",
+        )
+    )
+
+    # E10: với policy_refund_v4 trong lab chỉ nên còn đúng 1 chunk active sau clean.
+    refund_rows = [r for r in cleaned_rows if r.get("doc_id") == "policy_refund_v4"]
+    ok10 = len(refund_rows) == 1
+    results.append(
+        ExpectationResult(
+            "refund_single_active_chunk",
+            ok10,
+            "halt",
+            f"active_refund_rows={len(refund_rows)}",
         )
     )
 

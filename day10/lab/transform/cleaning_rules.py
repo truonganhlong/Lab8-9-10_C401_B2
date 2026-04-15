@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -25,6 +27,14 @@ ALLOWED_DOC_IDS = frozenset(
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DMY_SLASH = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
+HR_LEAVE_MIN_EFFECTIVE_DATE = os.environ.get("HR_LEAVE_MIN_EFFECTIVE_DATE", "2026-01-01").strip() or "2026-01-01"
+STALE_SOURCE_MARKERS = (
+    "bản sync cũ",
+    "lỗi migration",
+    "draft",
+    "deprecated",
+    "do not publish",
+)
 
 
 def _norm_text(s: str) -> str:
@@ -53,6 +63,26 @@ def _normalize_effective_date(raw: str) -> Tuple[str, str]:
     return "", "invalid_effective_date_format"
 
 
+def _normalize_exported_at(raw: str) -> Tuple[str, str]:
+    """
+    exported_at bắt buộc là ISO datetime để freshness/lineage không bị mơ hồ.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return "", "missing_exported_at"
+    probe = s[:-1] + "+00:00" if s.endswith("Z") else s
+    try:
+        dt = datetime.fromisoformat(probe)
+    except ValueError:
+        return "", "invalid_exported_at_format"
+    return dt.replace(microsecond=0).isoformat(), ""
+
+
+def _contains_stale_source_marker(text: str) -> bool:
+    lowered = _norm_text(text)
+    return any(marker in lowered for marker in STALE_SOURCE_MARKERS)
+
+
 def load_raw_csv(path: Path) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
     with path.open(encoding="utf-8", newline="") as f:
@@ -77,6 +107,9 @@ def clean_rows(
     4) Quarantine: chunk_text rỗng hoặc effective_date rỗng sau chuẩn hoá.
     5) Loại trùng nội dung chunk_text (giữ bản đầu).
     6) Fix stale refund: policy_refund_v4 chứa '14 ngày làm việc' → 7 ngày.
+    7) Chuẩn hoá exported_at sang ISO datetime; quarantine nếu thiếu / sai format.
+    8) Quarantine nếu effective_date nằm sau exported_at (lineage thời gian vô lý).
+    9) Quarantine nếu chunk còn marker stale/draft như 'bản sync cũ', 'lỗi migration'.
     """
     quarantine: List[Dict[str, Any]] = []
     seen_text: set[str] = set()
@@ -87,7 +120,7 @@ def clean_rows(
         doc_id = raw.get("doc_id", "")
         text = raw.get("chunk_text", "")
         eff_raw = raw.get("effective_date", "")
-        exported_at = raw.get("exported_at", "")
+        exported_at_raw = raw.get("exported_at", "")
 
         if doc_id not in ALLOWED_DOC_IDS:
             quarantine.append({**raw, "reason": "unknown_doc_id"})
@@ -101,12 +134,31 @@ def clean_rows(
             quarantine.append({**raw, "reason": eff_err, "effective_date_raw": eff_raw})
             continue
 
-        if doc_id == "hr_leave_policy" and eff_norm < "2026-01-01":
+        # Rule 7: exported_at phải parse được để freshness / manifest dùng lại an toàn.
+        exported_at, exported_err = _normalize_exported_at(exported_at_raw)
+        if exported_err:
+            quarantine.append({**raw, "reason": exported_err, "exported_at_raw": exported_at_raw})
+            continue
+
+        if doc_id == "hr_leave_policy" and eff_norm < HR_LEAVE_MIN_EFFECTIVE_DATE:
             quarantine.append(
                 {
                     **raw,
                     "reason": "stale_hr_policy_effective_date",
                     "effective_date_normalized": eff_norm,
+                }
+            )
+            continue
+
+        # Rule 8: effective_date sau exported_at nghĩa là snapshot bị đảo timeline.
+        export_date = exported_at.split("T", 1)[0]
+        if eff_norm > export_date:
+            quarantine.append(
+                {
+                    **raw,
+                    "reason": "effective_date_after_exported_at",
+                    "effective_date_normalized": eff_norm,
+                    "exported_at_normalized": exported_at,
                 }
             )
             continue
@@ -128,7 +180,14 @@ def clean_rows(
                     "14 ngày làm việc",
                     "7 ngày làm việc",
                 )
-                fixed_text += " [cleaned: stale_refund_window]"
+
+        # Rule 9: chunk stale/draft vẫn phải quarantine dù đã fix được một phần nội dung.
+        if _contains_stale_source_marker(fixed_text):
+            quarantine.append({**raw, "reason": "stale_source_marker", "chunk_text_cleaned": fixed_text})
+            continue
+
+        if apply_refund_window_fix and doc_id == "policy_refund_v4" and fixed_text != text:
+            fixed_text += " [cleaned: stale_refund_window]"
 
         seq += 1
         cleaned.append(

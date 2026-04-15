@@ -11,6 +11,9 @@ source_map:
     primary_failure_modes:
       - "duplicate_chunk_text"
       - "missing_effective_date"
+      - "invalid_exported_at_format"
+      - "effective_date_after_exported_at"
+      - "stale_source_marker"
       - "unknown_doc_id"
       - "invalid_effective_date_format"
     metrics:
@@ -60,6 +63,18 @@ quality_rules:
     severity: "warn"
   - id: "no_stale_refund_window"
     description: "Không được để chunk policy refund chứa cửa sổ 14 ngày (lệch so với v4 = 7 ngày)"
+    severity: "halt"
+  - id: "exported_at_iso_datetime"
+    description: "Mọi row cleaned phải có exported_at parse được để freshness và lineage đáng tin cậy"
+    severity: "halt"
+  - id: "effective_date_not_after_exported_at"
+    description: "effective_date không được nằm sau snapshot exported_at của cùng record"
+    severity: "halt"
+  - id: "no_stale_source_markers"
+    description: "Chunk cleaned không được chứa marker stale/draft như 'bản sync cũ' hoặc 'lỗi migration'"
+    severity: "halt"
+  - id: "refund_single_active_chunk"
+    description: "Trong bộ lab chỉ giữ đúng một chunk active cho policy_refund_v4 sau clean"
     severity: "halt"
 
 freshness:

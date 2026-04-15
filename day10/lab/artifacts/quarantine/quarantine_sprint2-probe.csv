@@ -1,0 +1,4 @@
+chunk_id,doc_id,chunk_text,effective_date,exported_at,reason,exported_at_raw,effective_date_normalized,exported_at_normalized,chunk_text_cleaned
+103,it_helpdesk_faq,Bản export lỗi timestamp để kiểm tra guardrail exported_at.,2026-02-01,2026/04/10 08:00:00,invalid_exported_at_format,2026/04/10 08:00:00,,,
+104,sla_p1_2026,Ticket P1 phải có owner on-call trước khi escalation sang incident bridge.,2026-04-11,2026-04-10T08:00:00,effective_date_after_exported_at,,2026-04-11,2026-04-10T08:00:00,
+105,policy_refund_v4,Yêu cầu hoàn tiền được chấp nhận trong vòng 14 ngày làm việc kể từ xác nhận đơn (ghi chú: bản sync cũ policy-v3 — lỗi migration).,2026-02-01,2026-04-10T08:00:00,stale_source_marker,,,,Yêu cầu hoàn tiền được chấp nhận trong vòng 7 ngày làm việc kể từ xác nhận đơn (ghi chú: bản sync cũ policy-v3 — lỗi migration).
